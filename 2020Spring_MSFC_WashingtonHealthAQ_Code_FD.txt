@@ -1,0 +1,577 @@
+/*//////////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////////////////Air Pollution Identification Tool (AirPIT)//////////////////////////////
+Title: Air Pollution Identification Tool
+Short Title: AirPIT
+Project: Washington Health and Air Quality, spring 2020
+Date Updated: 4/7/2020
+Authors: Amiya Kalra and Rachel Deininger
+Team POC: Amiya Kalra, ack.lmno@yahoo.com
+Other Team Members (did not write code): Richard Murray and Rachel Earwood
+Acknowledgments: Tim Mayer (NASA SERVIR) (helped with coding) and NASA DEVELOP Western Europe Health and 
+Air Quality II Interactive Model of Mosquito Distribution (used similar coding for tool UI)
+
+Description: Displays particulate matter, nitrogen dioxide, sulfur dioxide, carbon monoxide, formaldehyde, 
+methane, and ozone concentrations in the Pacific Northwest region of the United States.
+Usage: Does not require access to any assets or outside resources.
+In: Date of interest, region of interest, pollutant choices
+Out: Air pollutant concentrations and EPA Air Quality Index values
+///////////////////////////////////////////////////////////////////////////////////////////////////////////*/
+
+// Configure the map.
+Map.style().set('cursor', 'crosshair');
+//__________________________________________Additional Map Style___________________________________________//
+//custom basemap style
+var styles = {
+  'Soft Grey': [
+    {
+      featureType: 'all',
+      stylers: [
+        { saturation: -80 }
+      ]
+    },{
+      featureType: 'road.arterial',
+      elementType: 'geometry',
+      stylers: [
+        { hue: '#00ffee' },
+        { saturation: 50 }
+      ]
+    },{
+      featureType: 'poi.business',
+      elementType: 'labels',
+      stylers: [
+        { visibility: 'off' }
+      ]
+    }
+  ]
+};
+
+Map.setOptions('satellite', styles);
+
+//__________________________________________INTRO PANEL___________________________________________//
+
+//intro panel
+var intro_panel = ui.Panel({
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {width: '350px',
+          backgroundColor: '#150E07',
+          border: '10px ridge #B28355',
+          position: 'top-center',
+          shown: true}})
+  //add a label with the title of the tool, "iMMOD"
+  .add(ui.Label({
+    value: 'Air Pollutant Identification Tool',
+    style: {fontSize: '36px',
+            fontWeight: 'bold',
+            textAlign: 'center',
+            stretch: 'horizontal',
+            color: '#cf8c4a',
+            backgroundColor: '#150E07',
+            //padding: '0px 30px 0px 30px'
+    }}))
+  //add the long title
+  .add(ui.Label({
+    value: 'AirPIT',
+    style: {fontSize: '24px',
+            textAlign: 'center',
+            position: 'top-center',
+            stretch: 'horizontal',
+            color: '#9C5D1F',
+            backgroundColor: '#150E07',
+            //padding: '0px 30px 0px 30px'
+    }}))
+  //add a short description about the tool
+  .add(ui.Label({
+    value: 'The NASA DEVELOP Washington Health & Air Quality Team created this tool ' +
+    'for the Puget Sound Clean Air Agency to monitor near real time aeresols,' 
+    + ' formaldahyde, methane, sulfur dioxide, nitrogen dioxide, and ozone in the Pacific Northwest.',
+    style: {fontSize: '14px',
+            textAlign: 'justify',
+            color: '#74491F',
+            backgroundColor: '#150E07',
+            //padding: '10px 30px 10px 30px'
+    }}));
+//add the panel to the map
+Map.add(intro_panel);
+
+//create a button to hide the panel
+intro_panel.add(ui.Button(
+  {label: 'CLOSE',
+  style: {color: '#000000',
+          stretch: 'horizontal'
+  },
+  onClick: function() {
+  intro_panel.style().set('shown', false);
+  intro_button.style().set('shown', true);  
+  }
+}));
+
+//create a button to reveal the intro panel
+var intro_button = ui.Button({
+  label: 'INTRODUCTION',
+  style: {position: 'top-center',
+          color: '#000000',
+          padding: '0px',
+          shown: false
+  },
+  onClick: function() {
+    //hide the panel
+    intro_button.style().set('shown', false);
+    //reveal the panel
+    intro_panel.style().set('shown', true);
+  }
+});
+
+Map.add(intro_button);
+
+//__________________________________________Set Date___________________________________//
+
+ //specify the date range
+var subset = Map.getBounds(true);
+var Start_period = ee.Date('2019-02-08');
+var End_period = ee.Date(new Date().getTime()).advance(-14, 'day');
+
+ //specify the date range
+var startDate = ee.Date(new Date().getTime()).advance(-15,'day');
+var endDate = ee.Date(new Date().getTime()).advance(-14,'day');
+print(startDate, endDate);
+
+//__________________________________________SET VARIABLES AND PROPERTIES___________________________________//
+
+//Load collection data for PM2.5
+var PMCollection = ee.ImageCollection('MODIS/006/MCD19A2_GRANULES')
+  .select('Optical_Depth_047')
+  .filterDate(startDate, endDate);
+//Define visualization parameters for the initial AOD image displayed. Also define visualization parameters for PM2.5 to use
+//(this will not display classified pollutant concentrations, but it will allow the user to use the inspector tab to see 
+//PM2.5 concentration values)
+var PM_viz = {
+  min: 0,
+  max: 300,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+// Define an SLD style of discrete intervals to apply to the predicted PM2.5 image (this will allow the pollutant 
+//concentration display to be classified according to the concentration value for each pixel).
+var PM_sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+    '<ColorMapEntry color="#aec3d4" quantity="-300" label="null" opacity="0"/>' +
+    '<ColorMapEntry color="#00ff00" quantity="12.1" label="EPA Air Quality Index: Good" opacity="1"/>' +
+    '<ColorMapEntry color="#ffff00" quantity="35.5" label="EPA Air Quality Index: Moderate" opacity="1"/>' +
+    '<ColorMapEntry color="#ff9142" quantity="55.5" label="EPA Air Quality Index: Unhealthy for Sensitive Groups" opacity="1"/>' +
+    '<ColorMapEntry color="#fb130a" quantity="150.5" label="EPA Air Quality Index: Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#d2779f" quantity="250.5" label="EPA Air Quality Index: Very Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#752649" quantity="1000" label="EPA Air Quality Index: Hazardous" opacity="1"/>' +
+  '</ColorMap>' +
+'</RasterSymbolizer>';
+//convert the PM2.5 collection to an image to make it possible to run calculations with it
+var PM = ee.Image(PMCollection.median());
+
+// Load collection data for sensor altitude (from Sentinel NO2 dataset)
+//This will be used to convert all Sentinel units (except for CH4) from molecules/m^2 to micrograms/cm^3
+var sensorAltitudeCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+  .select('sensor_altitude')
+  .filterDate(startDate, endDate);
+//convert the image collection to an image to make it possible to run calculations with it
+var sensorAltitude = ee.Image(sensorAltitudeCollection.median());
+
+// Load collection data for nitrogen dioxide
+var NOXCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+  .select('tropospheric_NO2_column_number_density')
+  .filterDate(startDate, endDate);
+//Define visualization parameters for NOX to use (this will not display classified pollutant concentrations, but
+//it will allow the user to use the inspector tab to see NOX concentration values)
+var NOX_viz = {
+  min: 0,
+  max: 3000,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+// Define an SLD style of discrete intervals to apply to the predicted NOX image (this will allow the pollutant 
+//concentration display to be classified according to the concentration value for each pixel).
+var NOX_sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+    '<ColorMapEntry color="#aec3d4" quantity="-300" label="null" opacity="0"/>' +
+    '<ColorMapEntry color="#00ff00" quantity="100.1" label="EPA Air Quality Index: Good" opacity="1"/>' +
+    '<ColorMapEntry color="#ffff00" quantity="188.1" label="EPA Air Quality Index: Moderate" opacity="1"/>' +
+    '<ColorMapEntry color="#ff9142" quantity="677.1" label="EPA Air Quality Index: Unhealthy for Sensitive Groups" opacity="1"/>' +
+    '<ColorMapEntry color="#fb130a" quantity="1221.1" label="EPA Air Quality Index: Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#d2779f" quantity="2350.1" label="EPA Air Quality Index: Very Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#752649" quantity="1000000000" label="EPA Air Quality Index: Hazardous" opacity="1"/>' +
+  '</ColorMap>' +
+'</RasterSymbolizer>';
+//convert the NO2 image collection to an image to make it possible to run calculations with it
+var NOX = ee.Image(NOXCollection.median());
+//convert the NO2 units to micrograms/cm^3
+var NOXConvertedUnits = NOX.expression('((b(0) * 1.0) / altitude) * ((46005500 * 1.0) / (6.022*10**23))', 
+  {'altitude': sensorAltitude});
+
+// Load collection data for Carbon Monoxide 
+var COCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_CO')
+  .select('CO_column_number_density')
+  .filterDate(startDate, endDate);
+//Define visualization parameters for CO to use (this will not display classified pollutant concentrations, but
+//it will allow the user to use the inspector tab to see CO concentration values)
+var CO_viz = {
+  min: 0,
+  max: 1,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+// Define an SLD style of discrete intervals to apply to the predicted CO image (this will allow the pollutant 
+//concentration display to be classified according to the concentration value for each pixel).
+var CO_sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+    '<ColorMapEntry color="#aec3d4" quantity="-300" label="null" opacity="0"/>' +
+    '<ColorMapEntry color="#00ff00" quantity="0.0051" label="EPA Air Quality Index: Good" opacity="1"/>' +
+    '<ColorMapEntry color="#ffff00" quantity="0.0121" label="EPA Air Quality Index: Moderate" opacity="1"/>' +
+    '<ColorMapEntry color="#ff9142" quantity="0.0141" label="EPA Air Quality Index: Unhealthy for Sensitive Groups" opacity="1"/>' +
+    '<ColorMapEntry color="#fb130a" quantity="0.0181" label="EPA Air Quality Index: Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#d2779f" quantity="0.0351" label="EPA Air Quality Index: Very Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#752649" quantity="10" label="EPA Air Quality Index: Hazardous" opacity="1"/>' +
+  '</ColorMap>' +
+'</RasterSymbolizer>';
+//convert the CO image collection to an image to make it possible to run calculations with it
+var CO = ee.Image(COCollection.median());
+//convert the CO units to micrograms/cm^3
+var COConvertedUnits = CO.expression('((b(0) * 1.0) / altitude) * ((28010100 * 1.0) / (6.022*10**23))', 
+  {'altitude': sensorAltitude});
+
+// Load collection data for Formaldehyde
+var HCHOCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_HCHO')
+  .select('tropospheric_HCHO_column_number_density')
+  .filterDate(startDate, endDate);
+//There are no EPA Air Quality Index guidelines on methane, so we just used these visualization parameters.
+var HCHO_viz = {
+  min: 0.0,
+  max: 0.0003,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+//convert the HCHO image collection to an image to make it possible to run calculations with it
+var HCHO = ee.Image(HCHOCollection.median());
+//convert the HCHO units to micrograms/cm^3
+var HCHOConvertedUnits = HCHO.expression('((b(0) * 1.0) / altitude) * ((30025980 * 1.0) / (6.022*10**23))', 
+  {'altitude': sensorAltitude});
+
+// Load collection data for Methane
+var CH4Collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_CH4')
+  .select('CH4_column_volume_mixing_ratio_dry_air')
+  .filterDate(startDate, endDate);
+//There are no EPA Air Quality Index guidelines on methane, so we just used these visualization parameters.
+var CH4_viz = {
+  min: 1750,
+  max: 1900,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+//CH4 data comes in ppm, so no units conversion is necessary.
+//Convert the CH4 image collection to an image to make it take less time to load and to make it so that every
+//map layer is an ee.Image
+var CH4 = ee.Image(CH4Collection.median());
+
+// Load and display var collection data for Ozone
+var O3Collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_O3')
+  .select('O3_column_number_density')
+  .filterDate(startDate, endDate);
+//Define visualization parameters for O3 to use (this will not display classified pollutant concentrations, but
+//it will allow the user to use the inspector tab to see O3 concentration values)
+var O3_viz = {
+  min: 0,
+  max: 1,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+// Define an SLD style of discrete intervals to apply to the predicted O3 image (this will allow the pollutant 
+//concentration display to be classified according to the concentration value for each pixel).
+var O3_sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+    '<ColorMapEntry color="#aec3d4" quantity="-300" label="null" opacity="0"/>' +
+    '<ColorMapEntry color="#00ff00" quantity="0.000121" label="EPA Air Quality Index: Good" opacity="1"/>' +
+    '<ColorMapEntry color="#ffff00" quantity="0.000141" label="EPA Air Quality Index: Moderate" opacity="1"/>' +
+    '<ColorMapEntry color="#ff9142" quantity="0.000171" label="EPA Air Quality Index: Unhealthy for Sensitive Groups" opacity="1"/>' +
+    '<ColorMapEntry color="#fb130a" quantity="0.000211" label="EPA Air Quality Index: Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#d2779f" quantity="0.00041" label="EPA Air Quality Index: Very Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#752649" quantity="10" label="EPA Air Quality Index: Hazardous" opacity="1"/>' +
+  '</ColorMap>' +
+'</RasterSymbolizer>';
+//convert the O3 image collection to an image to make it possible to run calculations with it
+var O3 = ee.Image(O3Collection.median());
+//convert the O3 units to micrograms/cm^3
+var O3ConvertedUnits = O3.expression('((b(0) * 1.0) / altitude) * ((47998200 * 1.0) / (6.022*10**23))', 
+  {'altitude': sensorAltitude});
+
+// Load collection data for Sulfur Dioxide
+var SO2Collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_SO2')
+  .select('SO2_column_number_density')
+  .filterDate(startDate, endDate);
+//Define visualization parameters for SO2 to use (this will not display classified pollutant concentrations, but
+//it will allow the user to use the inspector tab to see SO2 concentration values)
+var SO2_viz = {
+  min: 0,
+  max: 2000,
+  palette: ['#00ff00', '#ffff00', '#ff9142', '#fb130a', '#d2779f', '#752649']
+};
+// Define an SLD style of discrete intervals to apply to the predicted SO2 image (this will allow the pollutant 
+//concentration display to be classified according to the concentration value for each pixel).
+var SO2_sld_intervals =
+'<RasterSymbolizer>' +
+ ' <ColorMap  type="intervals" extended="false" >' +
+    '<ColorMapEntry color="#aec3d4" quantity="-300" label="null" opacity="0"/>' +
+    '<ColorMapEntry color="#00ff00" quantity="92.1" label="EPA Air Quality Index: Good" opacity="1"/>' +
+    '<ColorMapEntry color="#ffff00" quantity="197.1" label="EPA Air Quality Index: Moderate" opacity="1"/>' +
+    '<ColorMapEntry color="#ff9142" quantity="485.1" label="EPA Air Quality Index: Unhealthy for Sensitive Groups" opacity="1"/>' +
+    '<ColorMapEntry color="#fb130a" quantity="797.1" label="EPA Air Quality Index: Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#d2779f" quantity="1583.1" label="EPA Air Quality Index: Very Unhealthy" opacity="1"/>' +
+    '<ColorMapEntry color="#752649" quantity="1000000000" label="EPA Air Quality Index: Hazardous" opacity="1"/>' +
+  '</ColorMap>' +
+'</RasterSymbolizer>';
+//convert the SO2 image collection to an image to make it possible to run calculations with it
+var SO2 = ee.Image(SO2Collection.median());
+//convert the SO2 units to micrograms/cm^3
+var SO2ConvertedUnits = SO2.expression('((b(0) * 1.0) / altitude) * ((64063800 * 1.0) / (6.022*10**23))', 
+  {'altitude': sensorAltitude});
+
+
+//__________________________________________ADD LAYERS TO MAP___________________________________________//
+
+var layers = [
+  ui.Map.Layer(PMCollection, PM_viz, 'Particulate Matter', false),
+  ui.Map.Layer(NOXConvertedUnits, NOX_viz, 'Nitrogen Dioxide', false),
+  ui.Map.Layer(COConvertedUnits, CO_viz, 'Carbon Monoxide', false),
+  ui.Map.Layer(HCHOConvertedUnits, HCHO_viz, 'Formaldehyde', false),
+  ui.Map.Layer(CH4, CH4_viz, 'Methane', false),
+  ui.Map.Layer(O3ConvertedUnits, O3_viz, 'Ozone', false),
+  ui.Map.Layer(SO2ConvertedUnits, SO2_viz, 'Sulfur Dioxide', false),
+  ];
+Map.layers().reset(layers);
+
+
+//__________________________________________Pollution PANEL___________________________________________//
+
+//create a layers panel
+var layers_panel = ui.Panel({
+  style: {width: '275px',
+          position: 'top-left',
+          color: '#002e4d',
+          backgroundColor: '#150E07',
+          border: '10px groove #B28355',
+          shown: false}
+});
+
+//add layers panel to the map
+ui.root.insert(0, layers_panel);
+
+//add a title "Pollutants "
+layers_panel.add(ui.Label({
+            value: 'Pollutants',
+            style: {fontSize: '24px',
+            color: '#cf8c4a',
+            backgroundColor: '#150E07',
+            textAlign: 'center',
+            fontWeight: 'bold',
+            stretch: 'horizontal'
+            }}));
+
+
+// UI widgets needs client-side data. evaluate()
+// to get client-side values of start and end period
+ee.Dictionary({start: Start_period, end: End_period})
+  .evaluate(function (dates) {
+    var slider = ui.DateSlider({
+      start: dates.start.value, 
+      end: dates.end.value, 
+      period: 2, // Every 2 days
+      onChange: renderDateRange,
+      style:{
+        position: 'top-right',
+      }});
+    layers_panel.add(slider);
+}); 
+  
+var renderDateRange = function(dateRange) {
+  print(dateRange);
+
+  //load collection data for AOD for the dates selected by the date slider
+  var newPMCollection = ee.ImageCollection('MODIS/006/MCD19A2_GRANULES')
+    .select('Optical_Depth_047')
+    .filterDate(dateRange.start(), dateRange.end());
+  //the variables june, july, august, and september represent a boolean statement saying that it is true that
+  //the month inputted by the date slider is june, july, august, or september, respectively
+  var june = ee.Algorithms.IsEqual(dateRange.start().get('month'), 6);
+  var july = ee.Algorithms.IsEqual(dateRange.start().get('month'), 7);
+  var august = ee.Algorithms.IsEqual(dateRange.start().get('month'), 8);
+  var september = ee.Algorithms.IsEqual(dateRange.start().get('month'), 9);
+  //this very long if statement will run a different equation on the AOD data depending on which month has been
+  //chosen in the date slider. If the month selected in the date slider is not June, July, August, or September,
+  //then the image will be empty, since we didn't calculate equations to predict PM2.5 from AOD for other months.
+  var newPM = ee.Algorithms.If(
+    {condition: june, 
+    trueCase: PM.expression("(y - 127.447165636683 * 1.0) / (11.6535057602808 * 1.0)", 
+       {"y": PM.select("Optical_Depth_047")}),
+    falseCase: ee.Algorithms.If(
+           {condition: july,
+           trueCase: PM.expression("(y - 96.9238526808914 * 1.0) / (7.60636503245922 * 1.0)",
+             {"y": PM.select("Optical_Depth_047")}),
+            falseCase: ee.Algorithms.If(
+                   {condition: august,
+                   trueCase: PM.expression("(y - 351.330679000716 * 1.0) / (9.98426796516342 * 1.0)",
+                     {"y": PM.select("Optical_Depth_047")}),
+                    falseCase: ee.Algorithms.If(
+                            {condition: september,
+                            trueCase: PM.expression("(y - 47.5444580504254 * 1.0) / (14.4633506657285 * 1.0)",
+                              {"y": PM.select("Optical_Depth_047")}),
+                            falseCase: null})
+                   })
+           })
+  });
+  
+  // Load collection data for sensor altitude (from Sentinel NO2 dataset) for the dates selected by the date slider
+  //This will be used to convert all Sentinel units (except for CH4) from molecules/m^2 to micrograms/cm^3
+  var newSensorAltitudeCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+    .select('sensor_altitude')
+    .filterDate(dateRange.start(), dateRange.end());
+  //convert the new image collection to an image to make it possible to run calculations with it
+  var newSensorAltitude = ee.Image(newSensorAltitudeCollection.median());
+  
+  //Load collection data for NOX for the dates selected by the date slider
+  var newNOXCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_NO2')
+    .select('tropospheric_NO2_column_number_density')
+    .filterDate(dateRange.start(), dateRange.end());
+  //convert the new NO2 image collection to an image to make it possible to run calculations with it
+  var newNOX = ee.Image(newNOXCollection.median());
+  //convert the NO2 units to micrograms/cm^3
+  var newNOXConvertedUnits = newNOX.expression('((b(0) * 1.0) / altitude) * ((46005500 * 1.0) / (6.022*10**23))', 
+    {'altitude': newSensorAltitude});
+  
+  //Load collection data for CO for the dates selected by the date slider
+  var newCOCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_CO')
+    .select('CO_column_number_density')
+    .filterDate(dateRange.start(), dateRange.end());
+  //convert the new CO image collection to an image to make it possible to run calculations with it
+  var newCO = ee.Image(newCOCollection.median());
+  //convert the CO units to micrograms/cm^3
+  var newCOConvertedUnits = newCO.expression('((b(0) * 1.0) / altitude) * ((28010100 * 1.0) / (6.022*10**23))', 
+    {'altitude': newSensorAltitude});
+  
+  //Load collection data for HCHO for the dates selected by the date slider
+  var newHCHOCollection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_HCHO')
+    .select('tropospheric_HCHO_column_number_density')
+    .filterDate(dateRange.start(), dateRange.end());
+  //convert the new HCHO image collection to an image to make it possible to run calculations with it
+  var newHCHO = ee.Image(newHCHOCollection.median());
+  //convert the HCHO units to micrograms/cm^3
+  var newHCHOConvertedUnits = newHCHO.expression('((b(0) * 1.0) / altitude) * ((30025980 * 1.0) / (6.022*10**23))', 
+  {'altitude': newSensorAltitude});
+  
+  //Load collection data for CH4 for the dates selected by the date slider
+  var newCH4Collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_CH4')
+    .select('CH4_column_volume_mixing_ratio_dry_air')
+    .filterDate(dateRange.start(), dateRange.end());
+  //CH4 data comes in ppm, so no units conversion is necessary.
+  //Convert the new CH4 image collection to an image to make it take less time to load and to make it so that every
+  //map layer is an ee.Image
+  var newCH4 = ee.Image(newCH4Collection.median());
+  
+  //Load collection data for O3 for the dates selected by the date slider
+  var newO3Collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_O3')
+    .select('O3_column_number_density')
+    .filterDate(dateRange.start(), dateRange.end());
+  //convert the new O3 image collection to an image to make it possible to run calculations with it
+  var newO3 = ee.Image(newO3Collection.median());
+  //convert the O3 units to micrograms/cm^3
+  var newO3ConvertedUnits = newO3.expression('((b(0) * 1.0) / altitude) * ((47998200 * 1.0) / (6.022*10**23))', 
+  {'altitude': newSensorAltitude});
+  
+  //Load collection data for SO2 for the dates selected by the date slider
+  var newSO2Collection = ee.ImageCollection('COPERNICUS/S5P/OFFL/L3_SO2')
+    .select('SO2_column_number_density')
+    .filterDate(dateRange.start(), dateRange.end());
+  //convert the new SO2 image collection to an image to make it possible to run calculations with it
+  var newSO2 = ee.Image(newSO2Collection.median());
+  //convert the SO2 units to micrograms/cm^3
+  var newSO2ConvertedUnits = newSO2.expression('((b(0) * 1.0) / altitude) * ((64063800 * 1.0) / (6.022*10**23))', 
+  {'altitude': newSensorAltitude});
+  
+  var layers = [
+    ui.Map.Layer(ee.Image(newPM), PM_viz, 'Particulate Matter', false),
+    ui.Map.Layer(newNOXConvertedUnits, NOX_viz, 'Nitrogen Dioxide', false),
+    ui.Map.Layer(newCOConvertedUnits, CO_viz, 'Carbon Monoxide', false),
+    ui.Map.Layer(newHCHOConvertedUnits, HCHO_viz, 'Formaldehyde', false),
+    ui.Map.Layer(newCH4, CH4_viz, 'Methane', false),
+    ui.Map.Layer(newO3ConvertedUnits, O3_viz, 'Ozone', false),
+    ui.Map.Layer(newSO2ConvertedUnits, SO2_viz, 'Sulfur Dioxide', false),
+  ];
+
+  Map.layers().reset(layers);
+};
+
+// Sets the long lat and zoom level for three differnt positions around the study area 
+var places = {
+  PugetSound: [- 122.3321, 47.6062, 8],
+  Washington: [- 122.3321, 47.6062, 6],
+  PacificNorthwest: [- 122.3321, 47.6062, 4],
+};
+
+var select = ui.Select({
+  items: Object.keys(places),
+  placeholder: ('Choose an area of interest...'),
+  style: {color: '#000000'},
+  onChange: function(key) {
+    //places[key][0] refers to the longitude of the map center, chosen from the variable places.
+    //places[key][1] refers to the latitude
+    //places[key][2] refers to the zoom level
+    Map.setCenter(places[key][0], places[key][1], places[key][2]);
+  }
+});
+// adds location selection to pollution panel
+layers_panel.add(select);
+
+//create a function that retrieves selected map layer 
+var nav = layers.map(function(layer){
+  var name = layer.getName();
+  return ui.Button({
+    label: name,
+    onClick: function(){
+    Map.layers().forEach(function(mapLayer){
+    mapLayer.setShown(mapLayer.getName() == name);});},
+    style: {stretch: 'horizontal'}
+  });});
+
+//add this function to the layers panel 
+layers_panel.add(ui.Panel({
+  widgets: nav,
+  style: {color: '#000000',
+          backgroundColor: '#150E07'
+  }
+}));
+
+//create and add a button to hide the panel
+layers_panel.add(ui.Button(
+  {label: 'CLOSE',
+  style: {color: '#000000',
+          stretch: 'horizontal'},
+  onClick: function() {
+  layers_panel.style().set('shown', false);
+  layers_button.style().set('shown', true);  
+  }
+}));
+
+//create a button to reveal the layers panel
+var layers_button = ui.Button({
+  label: 'Pollutants',
+  style: {position: 'bottom-left',
+          color: '#000000',
+          padding: '0px'
+          },
+  onClick: function() {
+    //hide the panel
+    layers_button.style().set('shown', false);
+    //reveal the panel
+    layers_panel.style().set('shown', true);
+  }
+});
+
+//add button to the map
+Map.add(layers_button);
+
+
+//getLayers(startDate);
+
